@@ -272,6 +272,3 @@ class ModSlash(commands.Cog):
             await interaction.response.send_message("I don't have the required permissions to unsilence this user.", ephemeral=True)
         except Exception as e:
             await interaction.response.send_message(f"An error occurred: {e}", ephemeral=True)
-
-async def setup(bot: Red):
-    await bot.add_cog(ModSlash(bot))

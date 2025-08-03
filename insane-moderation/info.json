@@ -15,7 +15,6 @@
         "ban",
         "mute"
     ],
-    "requirements": [],
     "min_bot_version": "3.5.0",
     "disabled": false,
     "end_user_data_statement": "This cog does not persistently store data or metadata about users."
