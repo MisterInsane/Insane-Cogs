@@ -31,6 +31,7 @@ async def is_mod_check(interaction: discord.Interaction) -> bool:
 # --- Context Menu Command Definitions (MUST be outside the class) ---
 
 @app_commands.context_menu(name="Kick User")
+@app_commands.default_permissions(kick_members=True)
 @app_commands.check(is_mod_check)
 async def kick_context_menu(interaction: discord.Interaction, member: discord.Member):
     """Kicks a user via the right-click context menu."""
@@ -59,6 +60,7 @@ async def kick_context_menu(interaction: discord.Interaction, member: discord.Me
         await interaction.response.send_message(f"An error occurred: {e}", ephemeral=True)
 
 @app_commands.context_menu(name="Ban User")
+@app_commands.default_permissions(ban_members=True)
 @app_commands.check(is_mod_check)
 async def ban_context_menu(interaction: discord.Interaction, member: discord.Member):
     """Bans a user via the right-click context menu."""
@@ -86,6 +88,56 @@ async def ban_context_menu(interaction: discord.Interaction, member: discord.Mem
     except Exception as e:
         await interaction.response.send_message(f"An error occurred: {e}", ephemeral=True)
 
+@app_commands.context_menu(name="Mute User")
+@app_commands.default_permissions(mute_members=True)
+@app_commands.check(is_mod_check)
+async def mute_context_menu(interaction: discord.Interaction, member: discord.Member):
+    """Mutes a user via the right-click context menu."""
+    author = interaction.user
+    bot = interaction.client
+    reason = f"Muted by {author.display_name} via context menu."
+
+    if not member.voice or not member.voice.channel:
+        await interaction.response.send_message(f"{member.mention} is not in a voice channel.", ephemeral=True)
+        return
+
+    if author.top_role <= member.top_role and not await bot.is_owner(author):
+        await interaction.response.send_message("You cannot mute a member with an equal or higher role.", ephemeral=True)
+        return
+
+    try:
+        await member.edit(mute=True, reason=reason)
+        await interaction.response.send_message(f"Successfully muted {member.mention}.", ephemeral=True)
+    except discord.Forbidden:
+        await interaction.response.send_message("I don't have the required permissions to mute this user.", ephemeral=True)
+    except Exception as e:
+        await interaction.response.send_message(f"An error occurred: {e}", ephemeral=True)
+
+@app_commands.context_menu(name="Deafen User")
+@app_commands.default_permissions(deafen_members=True)
+@app_commands.check(is_mod_check)
+async def deafen_context_menu(interaction: discord.Interaction, member: discord.Member):
+    """Deafens a user via the right-click context menu."""
+    author = interaction.user
+    bot = interaction.client
+    reason = f"Deafened by {author.display_name} via context menu."
+
+    if not member.voice or not member.voice.channel:
+        await interaction.response.send_message(f"{member.mention} is not in a voice channel.", ephemeral=True)
+        return
+
+    if author.top_role <= member.top_role and not await bot.is_owner(author):
+        await interaction.response.send_message("You cannot deafen a member with an equal or higher role.", ephemeral=True)
+        return
+
+    try:
+        await member.edit(deafen=True, reason=reason)
+        await interaction.response.send_message(f"Successfully deafened {member.mention}.", ephemeral=True)
+    except discord.Forbidden:
+        await interaction.response.send_message("I don't have the required permissions to deafen this user.", ephemeral=True)
+    except Exception as e:
+        await interaction.response.send_message(f"An error occurred: {e}", ephemeral=True)
+
 
 class ModSlash(commands.Cog):
     """
@@ -101,11 +153,15 @@ class ModSlash(commands.Cog):
         
         self.bot.tree.add_command(kick_context_menu)
         self.bot.tree.add_command(ban_context_menu)
+        self.bot.tree.add_command(mute_context_menu)
+        self.bot.tree.add_command(deafen_context_menu)
 
     async def cog_unload(self):
         """Clean up when the cog is unloaded."""
         self.bot.tree.remove_command(kick_context_menu.name, type=discord.AppCommandType.user)
         self.bot.tree.remove_command(ban_context_menu.name, type=discord.AppCommandType.user)
+        self.bot.tree.remove_command(mute_context_menu.name, type=discord.AppCommandType.user)
+        self.bot.tree.remove_command(deafen_context_menu.name, type=discord.AppCommandType.user)
 
     # --- Configuration Commands (Now as Prefix Commands) ---
     @commands.group()
@@ -156,6 +212,7 @@ class ModSlash(commands.Cog):
 
     # --- Slash Commands ---
     @app_commands.command(name="kick", description="Kicks a user from the server.")
+    @app_commands.default_permissions(kick_members=True)
     @app_commands.describe(member="The user to kick.", reason="The reason for the kick.")
     @app_commands.check(is_mod_check)
     async def kick_slash(self, interaction: discord.Interaction, member: discord.Member, reason: str = "No reason provided."):
@@ -181,6 +238,7 @@ class ModSlash(commands.Cog):
             await interaction.response.send_message(f"An error occurred: {e}", ephemeral=True)
 
     @app_commands.command(name="ban", description="Bans a user from the server.")
+    @app_commands.default_permissions(ban_members=True)
     @app_commands.describe(member="The user to ban.", reason="The reason for the ban.")
     @app_commands.check(is_mod_check)
     async def ban_slash(self, interaction: discord.Interaction, member: discord.Member, reason: str = "No reason provided."):
@@ -206,6 +264,7 @@ class ModSlash(commands.Cog):
             await interaction.response.send_message(f"An error occurred: {e}", ephemeral=True)
 
     @app_commands.command(name="mute", description="Mutes a user in their voice channel.")
+    @app_commands.default_permissions(mute_members=True)
     @app_commands.describe(member="The user to mute.", reason="The reason for the mute.")
     @app_commands.check(is_mod_check)
     async def mute_slash(self, interaction: discord.Interaction, member: discord.Member, reason: str = "No reason provided."):
@@ -226,6 +285,7 @@ class ModSlash(commands.Cog):
             await interaction.response.send_message(f"An error occurred: {e}", ephemeral=True)
 
     @app_commands.command(name="unmute", description="Unmutes a user in their voice channel.")
+    @app_commands.default_permissions(mute_members=True)
     @app_commands.describe(member="The user to unmute.")
     @app_commands.check(is_mod_check)
     async def unmute_slash(self, interaction: discord.Interaction, member: discord.Member):
@@ -246,6 +306,7 @@ class ModSlash(commands.Cog):
             await interaction.response.send_message(f"An error occurred: {e}", ephemeral=True)
 
     @app_commands.command(name="deafen", description="Deafens a user in their voice channel.")
+    @app_commands.default_permissions(deafen_members=True)
     @app_commands.describe(member="The user to deafen.", reason="The reason for the deafen.")
     @app_commands.check(is_mod_check)
     async def deafen_slash(self, interaction: discord.Interaction, member: discord.Member, reason: str = "No reason provided."):
@@ -266,6 +327,7 @@ class ModSlash(commands.Cog):
             await interaction.response.send_message(f"An error occurred: {e}", ephemeral=True)
 
     @app_commands.command(name="undeafen", description="Undeafens a user in their voice channel.")
+    @app_commands.default_permissions(deafen_members=True)
     @app_commands.describe(member="The user to undeafen.")
     @app_commands.check(is_mod_check)
     async def undeafen_slash(self, interaction: discord.Interaction, member: discord.Member):
@@ -286,6 +348,7 @@ class ModSlash(commands.Cog):
             await interaction.response.send_message(f"An error occurred: {e}", ephemeral=True)
 
     @app_commands.command(name="silence", description="Mutes and deafens a user in their voice channel.")
+    @app_commands.default_permissions(mute_members=True, deafen_members=True)
     @app_commands.describe(member="The user to silence.", reason="The reason for the silence.")
     @app_commands.check(is_mod_check)
     async def silence_slash(self, interaction: discord.Interaction, member: discord.Member, reason: str = "No reason provided."):
@@ -306,6 +369,7 @@ class ModSlash(commands.Cog):
             await interaction.response.send_message(f"An error occurred: {e}", ephemeral=True)
 
     @app_commands.command(name="unsilence", description="Unmutes and undeafens a user in their voice channel.")
+    @app_uploads.default_permissions(mute_members=True, deafen_members=True)
     @app_commands.describe(member="The user to unsilence.")
     @app_commands.check(is_mod_check)
     async def unsilence_slash(self, interaction: discord.Interaction, member: discord.Member):
