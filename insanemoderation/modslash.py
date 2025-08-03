@@ -34,6 +34,64 @@ async def is_mod_check(interaction: discord.Interaction) -> bool:
 
     return True
 
+# --- Context Menu Command Definitions (MUST be outside the class) ---
+
+@app_commands.context_menu(name="Kick User")
+@app_commands.check(is_mod_check)
+async def kick_context_menu(interaction: discord.Interaction, member: discord.Member):
+    """Kicks a user via the right-click context menu."""
+    author = interaction.user
+    bot = interaction.client
+    reason = f"Kicked by {author.display_name} via context menu."
+
+    if member.id == author.id:
+        await interaction.response.send_message("You cannot kick yourself.", ephemeral=True)
+        return
+
+    if author.top_role <= member.top_role and not await bot.is_owner(author):
+        await interaction.response.send_message("You cannot kick a member with an equal or higher role.", ephemeral=True)
+        return
+
+    if interaction.guild.me.top_role <= member.top_role:
+        await interaction.response.send_message("I cannot kick a member with an equal or higher role than me.", ephemeral=True)
+        return
+
+    try:
+        await member.kick(reason=reason)
+        await interaction.response.send_message(f"Successfully kicked {member.mention}.", ephemeral=True)
+    except discord.Forbidden:
+        await interaction.response.send_message("I don't have the required permissions to kick this user.", ephemeral=True)
+    except Exception as e:
+        await interaction.response.send_message(f"An error occurred: {e}", ephemeral=True)
+
+@app_commands.context_menu(name="Ban User")
+@app_commands.check(is_mod_check)
+async def ban_context_menu(interaction: discord.Interaction, member: discord.Member):
+    """Bans a user via the right-click context menu."""
+    author = interaction.user
+    bot = interaction.client
+    reason = f"Banned by {author.display_name} via context menu."
+
+    if member.id == author.id:
+        await interaction.response.send_message("You cannot ban yourself.", ephemeral=True)
+        return
+
+    if author.top_role <= member.top_role and not await bot.is_owner(author):
+        await interaction.response.send_message("You cannot ban a member with an equal or higher role.", ephemeral=True)
+        return
+
+    if interaction.guild.me.top_role <= member.top_role:
+        await interaction.response.send_message("I cannot ban a member with an equal or higher role than me.", ephemeral=True)
+        return
+
+    try:
+        await member.ban(reason=reason)
+        await interaction.response.send_message(f"Successfully banned {member.mention}.", ephemeral=True)
+    except discord.Forbidden:
+        await interaction.response.send_message("I don't have the required permissions to ban this user.", ephemeral=True)
+    except Exception as e:
+        await interaction.response.send_message(f"An error occurred: {e}", ephemeral=True)
+
 
 class ModSlash(commands.Cog):
     """
@@ -49,6 +107,14 @@ class ModSlash(commands.Cog):
             "mod_roles": []  # A list to store the IDs of moderator roles
         }
         self.config.register_guild(**default_guild)
+        # Register the context menu commands with the bot's command tree
+        self.bot.tree.add_command(kick_context_menu)
+        self.bot.tree.add_command(ban_context_menu)
+
+    async def cog_unload(self):
+        """Clean up when the cog is unloaded."""
+        self.bot.tree.remove_command(kick_context_menu.name, type=discord.AppCommandType.user)
+        self.bot.tree.remove_command(ban_context_menu.name, type=discord.AppCommandType.user)
 
     # --- Configuration Commands ---
     modslashset = app_commands.Group(name="modslashset", description="Configuration for ModSlash commands")
@@ -95,63 +161,6 @@ class ModSlash(commands.Cog):
             await interaction.response.send_message(f"{member.mention} is not in a voice channel.", ephemeral=True)
             return False
         return True
-
-    # --- Context Menu Commands ---
-
-    @app_commands.context_menu(name="Kick User")
-    @app_commands.check(is_mod_check)
-    async def kick_context_menu(self, interaction: discord.Interaction, member: discord.Member):
-        """Kicks a user via the right-click context menu."""
-        author = interaction.user
-        reason = f"Kicked by {author.display_name} via context menu."
-
-        if member.id == author.id:
-            await interaction.response.send_message("You cannot kick yourself.", ephemeral=True)
-            return
-
-        if author.top_role <= member.top_role and not await self.bot.is_owner(author):
-            await interaction.response.send_message("You cannot kick a member with an equal or higher role.", ephemeral=True)
-            return
-
-        if interaction.guild.me.top_role <= member.top_role:
-            await interaction.response.send_message("I cannot kick a member with an equal or higher role than me.", ephemeral=True)
-            return
-
-        try:
-            await member.kick(reason=reason)
-            await interaction.response.send_message(f"Successfully kicked {member.mention}.", ephemeral=True)
-        except discord.Forbidden:
-            await interaction.response.send_message("I don't have the required permissions to kick this user.", ephemeral=True)
-        except Exception as e:
-            await interaction.response.send_message(f"An error occurred: {e}", ephemeral=True)
-
-    @app_commands.context_menu(name="Ban User")
-    @app_commands.check(is_mod_check)
-    async def ban_context_menu(self, interaction: discord.Interaction, member: discord.Member):
-        """Bans a user via the right-click context menu."""
-        author = interaction.user
-        reason = f"Banned by {author.display_name} via context menu."
-
-        if member.id == author.id:
-            await interaction.response.send_message("You cannot ban yourself.", ephemeral=True)
-            return
-
-        if author.top_role <= member.top_role and not await self.bot.is_owner(author):
-            await interaction.response.send_message("You cannot ban a member with an equal or higher role.", ephemeral=True)
-            return
-
-        if interaction.guild.me.top_role <= member.top_role:
-            await interaction.response.send_message("I cannot ban a member with an equal or higher role than me.", ephemeral=True)
-            return
-
-        try:
-            await member.ban(reason=reason)
-            await interaction.response.send_message(f"Successfully banned {member.mention}.", ephemeral=True)
-        except discord.Forbidden:
-            await interaction.response.send_message("I don't have the required permissions to ban this user.", ephemeral=True)
-        except Exception as e:
-            await interaction.response.send_message(f"An error occurred: {e}", ephemeral=True)
-
 
     # --- Slash Commands (Kept for detailed reasons or other functionality) ---
     @app_commands.command(name="kick", description="Kicks a user from the server.")
