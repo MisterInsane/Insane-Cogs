@@ -1,0 +1,8 @@
+{
+    "author": [
+        "MrInsane"
+    ],
+    "description": "A collection of personal cogs for Redbot.",
+    "install_msg": "Thanks for adding the Insane-Cogs repository! Use `[p]cog list insane-cogs` to see available cogs.",
+    "short": "A personal cog repository by MrInsane."
+}
