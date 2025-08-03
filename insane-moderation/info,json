@@ -1,0 +1,19 @@
+{
+    "author": [
+        "MrInsane"
+    ],
+    "description": "A moderation cog that uses slash commands and respects both role hierarchy and a custom list of moderator roles. Includes kick, ban, mute, and deafen commands.",
+    "install_msg": "Thank you for installing the ModSlash cog! Use `/modslashset addrole` to configure which roles can use the moderation commands.",
+    "short": "Moderation slash commands with configurable roles.",
+    "tags": [
+        "moderation",
+        "slash",
+        "admin",
+        "roles",
+        "kick",
+        "ban",
+        "mute"
+    ],
+    "requirements": [],
+    "min_bot_version": "3.5.0"
+}
