@@ -8,26 +8,20 @@ from typing import List
 # or has one of the roles configured in the cog's settings.
 async def is_mod_check(interaction: discord.Interaction) -> bool:
     """Checks if the user has a configured moderator role or is the bot owner."""
-    # Bot owner bypasses all checks
     if await interaction.client.is_owner(interaction.user):
         return True
     
-    # Get the cog instance to access its config
     cog = interaction.client.get_cog("ModSlash")
     if not cog:
-        # This should not happen if the cog is loaded
         return False
 
-    # Retrieve the list of configured moderator role IDs for the current server
     mod_role_ids = await cog.config.guild(interaction.guild).mod_roles()
     if not mod_role_ids:
         await interaction.response.send_message("No moderator roles have been configured on this server.", ephemeral=True)
         return False
 
-    # Get the role IDs of the user who initiated the command
     author_role_ids = {role.id for role in interaction.user.roles}
     
-    # Check if the user has any of the configured moderator roles
     if not author_role_ids.intersection(mod_role_ids):
         await interaction.response.send_message("You do not have the required role to use this command.", ephemeral=True)
         return False
@@ -101,13 +95,10 @@ class ModSlash(commands.Cog):
 
     def __init__(self, bot: Red):
         self.bot = bot
-        # Initialize the Config system for persistent storage
         self.config = Config.get_conf(self, identifier=5842647, force_registration=True)
-        default_guild = {
-            "mod_roles": []  # A list to store the IDs of moderator roles
-        }
+        default_guild = {"mod_roles": []}
         self.config.register_guild(**default_guild)
-        # Register the context menu commands with the bot's command tree
+        
         self.bot.tree.add_command(kick_context_menu)
         self.bot.tree.add_command(ban_context_menu)
 
@@ -116,58 +107,58 @@ class ModSlash(commands.Cog):
         self.bot.tree.remove_command(kick_context_menu.name, type=discord.AppCommandType.user)
         self.bot.tree.remove_command(ban_context_menu.name, type=discord.AppCommandType.user)
 
-    # --- Configuration Commands ---
-    modslashset = app_commands.Group(name="modslashset", description="Configuration for ModSlash commands")
+    # --- Configuration Commands (Now as Prefix Commands) ---
+    @commands.group()
+    @commands.guild_only()
+    @commands.has_permissions(manage_guild=True)
+    async def modslashset(self, ctx: commands.Context):
+        """Configuration for ModSlash commands."""
+        pass
 
-    @modslashset.command(name="addrole", description="Adds a role that can use ModSlash commands.")
-    @app_commands.checks.has_permissions(manage_guild=True)
-    async def add_mod_role(self, interaction: discord.Interaction, role: discord.Role):
-        """Adds a moderator role."""
-        async with self.config.guild(interaction.guild).mod_roles() as mod_roles:
+    @modslashset.command(name="addrole")
+    async def add_mod_role(self, ctx: commands.Context, role: discord.Role):
+        """Adds a role that can use ModSlash commands."""
+        async with self.config.guild(ctx.guild).mod_roles() as mod_roles:
             if role.id in mod_roles:
-                await interaction.response.send_message(f"{role.mention} is already a moderator role.", ephemeral=True)
+                await ctx.send(f"{role.mention} is already a moderator role.")
             else:
                 mod_roles.append(role.id)
-                await interaction.response.send_message(f"{role.mention} has been added as a moderator role.", ephemeral=True)
+                await ctx.send(f"{role.mention} has been added as a moderator role.")
 
-    @modslashset.command(name="removerole", description="Removes a role from the ModSlash moderators.")
-    @app_commands.checks.has_permissions(manage_guild=True)
-    async def remove_mod_role(self, interaction: discord.Interaction, role: discord.Role):
-        """Removes a moderator role."""
-        async with self.config.guild(interaction.guild).mod_roles() as mod_roles:
+    @modslashset.command(name="removerole")
+    async def remove_mod_role(self, ctx: commands.Context, role: discord.Role):
+        """Removes a role from the ModSlash moderators."""
+        async with self.config.guild(ctx.guild).mod_roles() as mod_roles:
             if role.id not in mod_roles:
-                await interaction.response.send_message(f"{role.mention} is not a moderator role.", ephemeral=True)
+                await ctx.send(f"{role.mention} is not a moderator role.")
             else:
                 mod_roles.remove(role.id)
-                await interaction.response.send_message(f"{role.mention} has been removed from the moderator roles.", ephemeral=True)
+                await ctx.send(f"{role.mention} has been removed from the moderator roles.")
 
-    @modslashset.command(name="listroles", description="Lists the roles that can use ModSlash commands.")
-    @app_commands.checks.has_permissions(manage_guild=True)
-    async def list_mod_roles(self, interaction: discord.Interaction):
-        """Lists the current moderator roles."""
-        mod_role_ids = await self.config.guild(interaction.guild).mod_roles()
+    @modslashset.command(name="listroles")
+    async def list_mod_roles(self, ctx: commands.Context):
+        """Lists the roles that can use ModSlash commands."""
+        mod_role_ids = await self.config.guild(ctx.guild).mod_roles()
         if not mod_role_ids:
-            await interaction.response.send_message("No moderator roles are configured.", ephemeral=True)
+            await ctx.send("No moderator roles are configured.")
             return
 
         role_mentions = [f"<@&{role_id}>" for role_id in mod_role_ids]
-        await interaction.response.send_message(f"Moderator roles: {', '.join(role_mentions)}", ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
+        await ctx.send(f"Moderator roles: {', '.join(role_mentions)}", allowed_mentions=discord.AllowedMentions.none())
 
 
     # --- Helper Functions ---
     async def _check_voice_channel(self, interaction: discord.Interaction, member: discord.Member) -> bool:
-        """Helper function to check if a member is in a voice channel."""
         if not member.voice or not member.voice.channel:
             await interaction.response.send_message(f"{member.mention} is not in a voice channel.", ephemeral=True)
             return False
         return True
 
-    # --- Slash Commands (Kept for detailed reasons or other functionality) ---
+    # --- Slash Commands ---
     @app_commands.command(name="kick", description="Kicks a user from the server.")
     @app_commands.describe(member="The user to kick.", reason="The reason for the kick.")
     @app_commands.check(is_mod_check)
     async def kick_slash(self, interaction: discord.Interaction, member: discord.Member, reason: str = "No reason provided."):
-        """Kicks a member from the server, checking role hierarchy."""
         author = interaction.user
         if member.id == author.id:
             await interaction.response.send_message("You cannot kick yourself.", ephemeral=True)
@@ -193,7 +184,6 @@ class ModSlash(commands.Cog):
     @app_commands.describe(member="The user to ban.", reason="The reason for the ban.")
     @app_commands.check(is_mod_check)
     async def ban_slash(self, interaction: discord.Interaction, member: discord.Member, reason: str = "No reason provided."):
-        """Bans a member from the server, checking role hierarchy."""
         author = interaction.user
         if member.id == author.id:
             await interaction.response.send_message("You cannot ban yourself.", ephemeral=True)
@@ -219,7 +209,6 @@ class ModSlash(commands.Cog):
     @app_commands.describe(member="The user to mute.", reason="The reason for the mute.")
     @app_commands.check(is_mod_check)
     async def mute_slash(self, interaction: discord.Interaction, member: discord.Member, reason: str = "No reason provided."):
-        """Mutes a member in a voice channel."""
         if not await self._check_voice_channel(interaction, member):
             return
 
@@ -240,7 +229,6 @@ class ModSlash(commands.Cog):
     @app_commands.describe(member="The user to unmute.")
     @app_commands.check(is_mod_check)
     async def unmute_slash(self, interaction: discord.Interaction, member: discord.Member):
-        """Unmutes a member in a voice channel."""
         if not await self._check_voice_channel(interaction, member):
             return
 
@@ -261,7 +249,6 @@ class ModSlash(commands.Cog):
     @app_commands.describe(member="The user to deafen.", reason="The reason for the deafen.")
     @app_commands.check(is_mod_check)
     async def deafen_slash(self, interaction: discord.Interaction, member: discord.Member, reason: str = "No reason provided."):
-        """Deafens a member in a voice channel."""
         if not await self._check_voice_channel(interaction, member):
             return
 
@@ -282,7 +269,6 @@ class ModSlash(commands.Cog):
     @app_commands.describe(member="The user to undeafen.")
     @app_commands.check(is_mod_check)
     async def undeafen_slash(self, interaction: discord.Interaction, member: discord.Member):
-        """Undeafens a member in a voice channel."""
         if not await self._check_voice_channel(interaction, member):
             return
             
@@ -303,7 +289,6 @@ class ModSlash(commands.Cog):
     @app_commands.describe(member="The user to silence.", reason="The reason for the silence.")
     @app_commands.check(is_mod_check)
     async def silence_slash(self, interaction: discord.Interaction, member: discord.Member, reason: str = "No reason provided."):
-        """Mutes and deafens a member in a voice channel."""
         if not await self._check_voice_channel(interaction, member):
             return
 
@@ -324,7 +309,6 @@ class ModSlash(commands.Cog):
     @app_commands.describe(member="The user to unsilence.")
     @app_commands.check(is_mod_check)
     async def unsilence_slash(self, interaction: discord.Interaction, member: discord.Member):
-        """Unmutes and undeafens a member in a voice channel."""
         if not await self._check_voice_channel(interaction, member):
             return
 
