@@ -1,4 +1,4 @@
-from .modslash import ModSlash
+from .moderation import ModSlash
 
 async def setup(bot):
     """
@@ -6,4 +6,3 @@ async def setup(bot):
     This is called by Redbot to load the cog.
     """
     await bot.add_cog(ModSlash(bot))
-
