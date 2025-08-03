@@ -15,7 +15,8 @@ async def is_mod_check(interaction: discord.Interaction) -> bool:
     # Get the cog instance to access its config
     cog = interaction.client.get_cog("ModSlash")
     if not cog:
-        return False # Should not happen
+        # This should not happen if the cog is loaded
+        return False
 
     # Retrieve the list of configured moderator role IDs for the current server
     mod_role_ids = await cog.config.guild(interaction.guild).mod_roles()
@@ -36,7 +37,8 @@ async def is_mod_check(interaction: discord.Interaction) -> bool:
 
 class ModSlash(commands.Cog):
     """
-    A cog for moderation slash commands that respects role hierarchy and has configurable moderator roles.
+    A cog for moderation commands that respects role hierarchy and has configurable moderator roles.
+    Includes slash commands and context menu commands.
     """
 
     def __init__(self, bot: Red):
@@ -94,7 +96,64 @@ class ModSlash(commands.Cog):
             return False
         return True
 
-    # --- Moderation Commands ---
+    # --- Context Menu Commands ---
+
+    @app_commands.context_menu(name="Kick User")
+    @app_commands.check(is_mod_check)
+    async def kick_context_menu(self, interaction: discord.Interaction, member: discord.Member):
+        """Kicks a user via the right-click context menu."""
+        author = interaction.user
+        reason = f"Kicked by {author.display_name} via context menu."
+
+        if member.id == author.id:
+            await interaction.response.send_message("You cannot kick yourself.", ephemeral=True)
+            return
+
+        if author.top_role <= member.top_role and not await self.bot.is_owner(author):
+            await interaction.response.send_message("You cannot kick a member with an equal or higher role.", ephemeral=True)
+            return
+
+        if interaction.guild.me.top_role <= member.top_role:
+            await interaction.response.send_message("I cannot kick a member with an equal or higher role than me.", ephemeral=True)
+            return
+
+        try:
+            await member.kick(reason=reason)
+            await interaction.response.send_message(f"Successfully kicked {member.mention}.", ephemeral=True)
+        except discord.Forbidden:
+            await interaction.response.send_message("I don't have the required permissions to kick this user.", ephemeral=True)
+        except Exception as e:
+            await interaction.response.send_message(f"An error occurred: {e}", ephemeral=True)
+
+    @app_commands.context_menu(name="Ban User")
+    @app_commands.check(is_mod_check)
+    async def ban_context_menu(self, interaction: discord.Interaction, member: discord.Member):
+        """Bans a user via the right-click context menu."""
+        author = interaction.user
+        reason = f"Banned by {author.display_name} via context menu."
+
+        if member.id == author.id:
+            await interaction.response.send_message("You cannot ban yourself.", ephemeral=True)
+            return
+
+        if author.top_role <= member.top_role and not await self.bot.is_owner(author):
+            await interaction.response.send_message("You cannot ban a member with an equal or higher role.", ephemeral=True)
+            return
+
+        if interaction.guild.me.top_role <= member.top_role:
+            await interaction.response.send_message("I cannot ban a member with an equal or higher role than me.", ephemeral=True)
+            return
+
+        try:
+            await member.ban(reason=reason)
+            await interaction.response.send_message(f"Successfully banned {member.mention}.", ephemeral=True)
+        except discord.Forbidden:
+            await interaction.response.send_message("I don't have the required permissions to ban this user.", ephemeral=True)
+        except Exception as e:
+            await interaction.response.send_message(f"An error occurred: {e}", ephemeral=True)
+
+
+    # --- Slash Commands (Kept for detailed reasons or other functionality) ---
     @app_commands.command(name="kick", description="Kicks a user from the server.")
     @app_commands.describe(member="The user to kick.", reason="The reason for the kick.")
     @app_commands.check(is_mod_check)
