@@ -369,7 +369,7 @@ class ModSlash(commands.Cog):
             await interaction.response.send_message(f"An error occurred: {e}", ephemeral=True)
 
     @app_commands.command(name="unsilence", description="Unmutes and undeafens a user in their voice channel.")
-    @app_uploads.default_permissions(mute_members=True, deafen_members=True)
+    @app_commands.default_permissions(mute_members=True, deafen_members=True)
     @app_commands.describe(member="The user to unsilence.")
     @app_commands.check(is_mod_check)
     async def unsilence_slash(self, interaction: discord.Interaction, member: discord.Member):
