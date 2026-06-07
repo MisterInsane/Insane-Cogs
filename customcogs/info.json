@@ -1,0 +1,21 @@
+{
+    "author": [
+        "MrInsane"
+    ],
+    "name": "CustomCogs",
+    "description": "A sleek, interactive, and visually stunning cogs list for Redbot utilizing modern Discord UI components.",
+    "install_msg": "CustomCogs loaded successfully! Your default [p]cogs command has been overridden with a modern, repository-aware interactive dashboard. Type [p]cogs to see it in action.",
+    "short": "Interactive custom cogs list override command using modern Discord UI.",
+    "tags": [
+        "utility",
+        "interactive",
+        "ui",
+        "menus",
+        "buttons",
+        "cogs",
+        "override"
+    ],
+    "min_bot_version": "3.5.0",
+    "disabled": false,
+    "end_user_data_statement": "This cog does not persistently store data or metadata about users."
+}
