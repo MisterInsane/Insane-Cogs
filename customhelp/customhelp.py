@@ -865,9 +865,11 @@ class CustomHelpFormatter(HelpFormatterABC):
         
     async def get_cogs_and_commands(self, ctx: commands.Context, help_settings: HelpSettings) -> dict:
         all_commands = list(ctx.bot.commands)
-        all_visible_commands = await RedHelpFormatter.help_filter_func(
-            ctx, all_commands, help_settings=help_settings
-        )
+        all_visible_commands = [
+            cmd async for cmd in RedHelpFormatter.help_filter_func(
+                ctx, all_commands, help_settings=help_settings
+            )
+        ]
                 
         custom_categories = await self.cog.config.custom_categories()
         
