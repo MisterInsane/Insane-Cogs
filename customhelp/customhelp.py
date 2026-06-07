@@ -73,6 +73,33 @@ class CogSelect(discord.ui.Select):
             await view.show_cog(interaction, selected)
 
 
+class CommandSelect(discord.ui.Select):
+    def __init__(self, commands_list: typing.List[commands.Command], placeholder="Select a command to view details..."):
+        options = []
+        for cmd in commands_list:
+            desc = cmd.short_doc or "No description."
+            if len(desc) > 100:
+                desc = desc[:97] + "..."
+            options.append(discord.SelectOption(
+                label=cmd.name[:100],
+                value=cmd.qualified_name[:100],
+                description=desc,
+                emoji="🔹"
+            ))
+        super().__init__(
+            placeholder=placeholder,
+            min_values=1,
+            max_values=1,
+            options=options,
+            custom_id="help_command_select"
+        )
+        
+    async def callback(self, interaction: discord.Interaction):
+        view: HelpView = self.view
+        selected = self.values[0]
+        await view.show_command_details(interaction, selected)
+
+
 class SearchModal(discord.ui.Modal):
     def __init__(self, view: "HelpView"):
         super().__init__(title="Search Bot Commands", custom_id="help_search_modal")
@@ -113,8 +140,16 @@ class SearchModal(discord.ui.Modal):
                 break
                 
         if exact_match:
-            embed = self.view.formatter.get_command_help_embed(self.view.ctx, exact_match, self.view.config_data)
-            await interaction.response.send_message(embed=embed, ephemeral=True)
+            cog_name = exact_match.cog_name or "Uncategorized"
+            if cog_name in self.view.cogs_data:
+                self.view.current_cog = cog_name
+                self.view.current_command = exact_match
+                self.view.refresh_components()
+                embed = self.view.formatter.get_command_help_embed(self.view.ctx, exact_match, self.view.config_data)
+                await interaction.response.edit_message(embed=embed, view=self.view)
+            else:
+                embed = self.view.formatter.get_command_help_embed(self.view.ctx, exact_match, self.view.config_data)
+                await interaction.response.send_message(embed=embed, ephemeral=True)
             return
             
         # Fuzzy match
@@ -158,37 +193,60 @@ class HelpView(discord.ui.View):
         self.message = None
         
         self.current_cog = None
+        self.current_command = None
         self.current_page = 0
         self.COMMANDS_PER_PAGE = 8
         
         cogs_list = sorted(list(cogs_data.keys()))
         self.select_menu = CogSelect(cogs_list, config_data.get("cog_emojis", {}))
-        self.add_item(self.select_menu)
         
         self.btn_prev = discord.ui.Button(label="◀", style=discord.ButtonStyle.secondary, custom_id="help_btn_prev")
         self.btn_prev.callback = self.prev_page
-        self.add_item(self.btn_prev)
         
         self.btn_next = discord.ui.Button(label="▶", style=discord.ButtonStyle.secondary, custom_id="help_btn_next")
         self.btn_next.callback = self.next_page
-        self.add_item(self.btn_next)
+        
+        self.btn_back = discord.ui.Button(label="◀ Back to List", style=discord.ButtonStyle.primary, custom_id="help_btn_back")
+        self.btn_back.callback = self.back_to_cog_list
+        
+        self.btn_home = discord.ui.Button(label="Home", style=discord.ButtonStyle.secondary, emoji="🏠", custom_id="help_btn_home")
+        self.btn_home.callback = self.go_home_button
         
         self.btn_search = discord.ui.Button(label="Search", style=discord.ButtonStyle.primary, emoji="🔍", custom_id="help_btn_search")
         self.btn_search.callback = self.open_search
-        self.add_item(self.btn_search)
         
         self.btn_delete = discord.ui.Button(label="Close", style=discord.ButtonStyle.danger, emoji="❌", custom_id="help_btn_delete")
         self.btn_delete.callback = self.delete_menu
-        self.add_item(self.btn_delete)
         
-        self.update_button_states()
+        self.refresh_components()
         
-    def update_button_states(self):
+    def refresh_components(self):
+        self.clear_items()
+        self.add_item(self.select_menu)
+        
         if self.current_cog is None:
-            self.btn_prev.disabled = True
-            self.btn_next.disabled = True
+            self.add_item(self.btn_search)
+            self.add_item(self.btn_delete)
+        elif self.current_command is not None:
+            self.add_item(self.btn_back)
+            self.add_item(self.btn_search)
+            self.add_item(self.btn_delete)
         else:
             commands_list = self.cogs_data[self.current_cog]
+            start_idx = self.current_page * self.COMMANDS_PER_PAGE
+            end_idx = start_idx + self.COMMANDS_PER_PAGE
+            page_commands = commands_list[start_idx:end_idx]
+            
+            if page_commands:
+                self.command_select = CommandSelect(page_commands)
+                self.add_item(self.command_select)
+                
+            self.add_item(self.btn_prev)
+            self.add_item(self.btn_next)
+            self.add_item(self.btn_home)
+            self.add_item(self.btn_search)
+            self.add_item(self.btn_delete)
+            
             total_pages = math.ceil(len(commands_list) / self.COMMANDS_PER_PAGE)
             self.btn_prev.disabled = (self.current_page == 0)
             self.btn_next.disabled = (self.current_page >= total_pages - 1)
@@ -287,22 +345,24 @@ class HelpView(discord.ui.View):
 
     async def show_home(self, interaction: discord.Interaction):
         self.current_cog = None
+        self.current_command = None
         self.current_page = 0
-        self.update_button_states()
+        self.refresh_components()
         embed = self.get_home_embed()
         await interaction.response.edit_message(embed=embed, view=self)
         
     async def show_cog(self, interaction: discord.Interaction, cog_name: str):
         self.current_cog = cog_name
+        self.current_command = None
         self.current_page = 0
-        self.update_button_states()
+        self.refresh_components()
         embed = self.get_cog_embed()
         await interaction.response.edit_message(embed=embed, view=self)
         
     async def prev_page(self, interaction: discord.Interaction):
         if self.current_cog and self.current_page > 0:
             self.current_page -= 1
-            self.update_button_states()
+            self.refresh_components()
             embed = self.get_cog_embed()
             await interaction.response.edit_message(embed=embed, view=self)
             
@@ -312,10 +372,30 @@ class HelpView(discord.ui.View):
             total_pages = math.ceil(len(commands_list) / self.COMMANDS_PER_PAGE)
             if self.current_page < total_pages - 1:
                 self.current_page += 1
-                self.update_button_states()
+                self.refresh_components()
                 embed = self.get_cog_embed()
                 await interaction.response.edit_message(embed=embed, view=self)
                 
+    async def go_home_button(self, interaction: discord.Interaction):
+        await self.show_home(interaction)
+        
+    async def back_to_cog_list(self, interaction: discord.Interaction):
+        self.current_command = None
+        self.refresh_components()
+        embed = self.get_cog_embed()
+        await interaction.response.edit_message(embed=embed, view=self)
+        
+    async def show_command_details(self, interaction: discord.Interaction, command_name: str):
+        commands_list = self.cogs_data[self.current_cog]
+        cmd_obj = next((c for c in commands_list if c.qualified_name == command_name), None)
+        if cmd_obj:
+            self.current_command = cmd_obj
+            self.refresh_components()
+            embed = self.formatter.get_command_help_embed(self.ctx, cmd_obj, self.config_data)
+            await interaction.response.edit_message(embed=embed, view=self)
+        else:
+            await interaction.response.send_message("Command details not found.", ephemeral=True)
+            
     async def open_search(self, interaction: discord.Interaction):
         await interaction.response.send_modal(SearchModal(self))
         
@@ -472,7 +552,7 @@ class CustomHelpFormatter(HelpFormatterABC):
                 view = HelpView(ctx, self, cogs_data, help_settings, config_data)
                 view.current_cog = cog_name
                 view.current_page = 0
-                view.update_button_states()
+                view.refresh_components()
                 embed = view.get_cog_embed()
                 msg = await ctx.send(embed=embed, view=view)
                 view.message = msg
@@ -493,8 +573,19 @@ class CustomHelpFormatter(HelpFormatterABC):
                     break
                     
             if cmd_found:
-                embed = self.get_command_help_embed(ctx, cmd_found, config_data)
-                await ctx.send(embed=embed)
+                # Show Command help page in channel with navigation back to its cog
+                cog_name = cmd_found.cog_name or "Uncategorized"
+                if cog_name in cogs_data:
+                    view = HelpView(ctx, self, cogs_data, help_settings, config_data)
+                    view.current_cog = cog_name
+                    view.current_command = cmd_found
+                    view.refresh_components()
+                    embed = self.get_command_help_embed(ctx, cmd_found, config_data)
+                    msg = await ctx.send(embed=embed, view=view)
+                    view.message = msg
+                else:
+                    embed = self.get_command_help_embed(ctx, cmd_found, config_data)
+                    await ctx.send(embed=embed)
                 return
                 
             # Fuzzy match
@@ -529,7 +620,7 @@ class CustomHelpFormatter(HelpFormatterABC):
                 view = HelpView(ctx, self, cogs_data, help_settings, config_data)
                 view.current_cog = cog_name
                 view.current_page = 0
-                view.update_button_states()
+                view.refresh_components()
                 embed = view.get_cog_embed()
                 msg = await ctx.send(embed=embed, view=view)
                 view.message = msg
@@ -548,8 +639,20 @@ class CustomHelpFormatter(HelpFormatterABC):
                 except Exception:
                     await ctx.send(f"No command found matching `{help_for.qualified_name}`.")
                     return
-            embed = self.get_command_help_embed(ctx, help_for, config_data)
-            await ctx.send(embed=embed)
+                    
+            cogs_data = await self.get_cogs_and_commands(ctx, help_settings)
+            cog_name = help_for.cog_name or "Uncategorized"
+            if cog_name in cogs_data:
+                view = HelpView(ctx, self, cogs_data, help_settings, config_data)
+                view.current_cog = cog_name
+                view.current_command = help_for
+                view.refresh_components()
+                embed = self.get_command_help_embed(ctx, help_for, config_data)
+                msg = await ctx.send(embed=embed, view=view)
+                view.message = msg
+            else:
+                embed = self.get_command_help_embed(ctx, help_for, config_data)
+                await ctx.send(embed=embed)
             return
 
 
