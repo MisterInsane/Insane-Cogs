@@ -865,7 +865,7 @@ class CustomHelpFormatter(HelpFormatterABC):
         
     async def get_cogs_and_commands(self, ctx: commands.Context, help_settings: HelpSettings) -> dict:
         all_visible_commands = []
-        for cog_name, cog in ctx.bot.cogs.items():
+        for cog_name, cog in list(ctx.bot.cogs.items()):
             cog_commands = cog.get_commands()
             for cmd in cog_commands:
                 if cmd.hidden and not help_settings.show_hidden:
@@ -879,7 +879,7 @@ class CustomHelpFormatter(HelpFormatterABC):
                         continue
                 all_visible_commands.append(cmd)
                 
-        for cmd in ctx.bot.commands:
+        for cmd in list(ctx.bot.commands):
             if cmd.cog is None:
                 if cmd.hidden and not help_settings.show_hidden:
                     continue
