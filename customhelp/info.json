@@ -1,0 +1,22 @@
+{
+    "author": [
+        "MrInsane"
+    ],
+    "name": "CustomHelp",
+    "description": "A sleek, interactive, and visually stunning custom help menu for Redbot utilizing modern Discord UI components like buttons, selects, and modals.",
+    "install_msg": "Interactive Help loaded successfully! Your default [p]help menu has been overridden with a modern, pagination-friendly interactive dashboard. Type [p]help to see it in action. Configure it with [p]customhelpset.",
+    "short": "Interactive custom help menu replacement using modern Discord UI.",
+    "tags": [
+        "help",
+        "utility",
+        "interactive",
+        "ui",
+        "menus",
+        "buttons",
+        "dropdown",
+        "modal"
+    ],
+    "min_bot_version": "3.5.0",
+    "disabled": false,
+    "end_user_data_statement": "This cog does not persistently store data or metadata about users."
+}
