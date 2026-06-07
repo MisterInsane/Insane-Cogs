@@ -998,155 +998,163 @@ class CustomHelpFormatter(HelpFormatterABC):
     async def send_help(
         self, ctx: commands.Context, help_for: HelpTarget = None, *, from_help_command: bool = False
     ):
-        help_settings = await HelpSettings.from_context(ctx)
-        
-        config_data = {
-            "embed_color": await self.cog.config.embed_color(),
-            "cog_emojis": await self.cog.config.cog_emojis(),
-            "thumbnail_url": await self.cog.config.thumbnail_url(),
-            "custom_title": await self.cog.config.custom_title(),
-            "custom_description": await self.cog.config.custom_description(),
-            "custom_categories": await self.cog.config.custom_categories(),
-        }
-        
-        # Home Page Help
-        if help_for is None or isinstance(help_for, dpy_commands.bot.BotBase):
-            cogs_data = await self.get_cogs_and_commands(ctx, help_settings)
-            if not cogs_data:
-                await ctx.send("No commands are available for you to view.")
-                return
-                
-            view = HelpView(ctx, self, cogs_data, help_settings, config_data)
-            embed = view.get_home_embed()
-            msg = await ctx.send(embed=embed, view=view)
-            view.message = msg
-            return
+        try:
+            help_settings = await HelpSettings.from_context(ctx)
             
-        # String help (command name, category name, etc.)
-        if isinstance(help_for, str):
-            cogs_data = await self.get_cogs_and_commands(ctx, help_settings)
-            cogs_matched = [c for c in cogs_data.keys() if c.lower() == help_for.lower()]
-            if cogs_matched:
-                cog_name = cogs_matched[0]
+            config_data = {
+                "embed_color": await self.cog.config.embed_color(),
+                "cog_emojis": await self.cog.config.cog_emojis(),
+                "thumbnail_url": await self.cog.config.thumbnail_url(),
+                "custom_title": await self.cog.config.custom_title(),
+                "custom_description": await self.cog.config.custom_description(),
+                "custom_categories": await self.cog.config.custom_categories(),
+            }
+            
+            # Home Page Help
+            if help_for is None or isinstance(help_for, dpy_commands.bot.BotBase):
+                cogs_data = await self.get_cogs_and_commands(ctx, help_settings)
+                if not cogs_data:
+                    await ctx.send("No commands are available for you to view.")
+                    return
+                    
                 view = HelpView(ctx, self, cogs_data, help_settings, config_data)
-                view.current_cog = cog_name
-                view.current_page = 0
-                view.refresh_components()
-                embed = view.get_cog_embed()
+                embed = view.get_home_embed()
                 msg = await ctx.send(embed=embed, view=view)
                 view.message = msg
                 return
                 
-            # Parse as command name
-            all_visible_commands = []
-            for cmds in cogs_data.values():
-                all_visible_commands.extend(cmds)
-                
-            cmd_found = None
-            for cmd in all_visible_commands:
-                if cmd.qualified_name.lower() == help_for.lower():
-                    cmd_found = cmd
-                    break
-                if help_for.lower() in [a.lower() for a in cmd.aliases]:
-                    cmd_found = cmd
-                    break
+            # String help (command name, category name, etc.)
+            if isinstance(help_for, str):
+                cogs_data = await self.get_cogs_and_commands(ctx, help_settings)
+                cogs_matched = [c for c in cogs_data.keys() if c.lower() == help_for.lower()]
+                if cogs_matched:
+                    cog_name = cogs_matched[0]
+                    view = HelpView(ctx, self, cogs_data, help_settings, config_data)
+                    view.current_cog = cog_name
+                    view.current_page = 0
+                    view.refresh_components()
+                    embed = view.get_cog_embed()
+                    msg = await ctx.send(embed=embed, view=view)
+                    view.message = msg
+                    return
                     
-            if cmd_found:
+                # Parse as command name
+                all_visible_commands = []
+                for cmds in cogs_data.values():
+                    all_visible_commands.extend(cmds)
+                    
+                cmd_found = None
+                for cmd in all_visible_commands:
+                    if cmd.qualified_name.lower() == help_for.lower():
+                        cmd_found = cmd
+                        break
+                    if help_for.lower() in [a.lower() for a in cmd.aliases]:
+                        cmd_found = cmd
+                        break
+                        
+                if cmd_found:
+                    assigned_category = "Uncategorized"
+                    for cat_name, cmds in cogs_data.items():
+                        if cmd_found in cmds:
+                            assigned_category = cat_name
+                            break
+                            
+                    view = HelpView(ctx, self, cogs_data, help_settings, config_data)
+                    view.current_cog = assigned_category
+                    view.current_command = cmd_found
+                    view.refresh_components()
+                    embed = self.get_command_help_embed(ctx, cmd_found, config_data)
+                    msg = await ctx.send(embed=embed, view=view)
+                    view.message = msg
+                    return
+                    
+                # Fuzzy match
+                names = [cmd.qualified_name for cmd in all_visible_commands]
+                matches = difflib.get_close_matches(help_for, names, n=5, cutoff=0.3)
+                color = config_data.get("embed_color", 0x2f3136)
+                if matches:
+                    embed = discord.Embed(
+                        title="🔍 Command Not Found",
+                        description=f"No command found matching `{help_for}`. Did you mean one of these?",
+                        color=color
+                    )
+                    for match in matches:
+                        cmd_obj = next((c for c in all_visible_commands if c.qualified_name == match), None)
+                        if cmd_obj:
+                            short = cmd_obj.short_doc or "No description."
+                            embed.add_field(
+                                name=f"`{ctx.clean_prefix}{cmd_obj.qualified_name}`",
+                                value=short,
+                                inline=False
+                            )
+                    await ctx.send(embed=embed)
+                else:
+                    await ctx.send(f"No command or category found matching `{help_for}`.")
+                return
+                
+            # Cog object help
+            if isinstance(help_for, commands.Cog):
+                cogs_data = await self.get_cogs_and_commands(ctx, help_settings)
+                cog_name = help_for.qualified_name
+                
+                # Find which custom category includes this Cog
+                assigned_category = None
+                custom_categories = config_data.get("custom_categories", {})
+                for cat_name, cat_data in custom_categories.items():
+                    if cog_name in cat_data.get("cogs", []):
+                        assigned_category = cat_name
+                        break
+                
+                # If not assigned to a custom category, check if it's visible in default categories (fallback to cog_name)
+                if assigned_category is None:
+                    assigned_category = cog_name if cog_name in cogs_data else "Uncategorized"
+                    
+                if assigned_category in cogs_data:
+                    view = HelpView(ctx, self, cogs_data, help_settings, config_data)
+                    view.current_cog = assigned_category
+                    view.current_page = 0
+                    view.refresh_components()
+                    embed = view.get_cog_embed()
+                    msg = await ctx.send(embed=embed, view=view)
+                    view.message = msg
+                else:
+                    await ctx.send(f"No commands are available in category `{cog_name}`.")
+                return
+                
+            # Command/Group object help
+            if isinstance(help_for, (commands.Command, dpy_commands.Command)):
+                if help_settings.verify_checks:
+                    try:
+                        can_run = await help_for.can_run(ctx)
+                        if not can_run:
+                            await ctx.send(f"No command found matching `{help_for.qualified_name}`.")
+                            return
+                    except Exception:
+                        await ctx.send(f"No command found matching `{help_for.qualified_name}`.")
+                        return
+                        
+                cogs_data = await self.get_cogs_and_commands(ctx, help_settings)
                 assigned_category = "Uncategorized"
                 for cat_name, cmds in cogs_data.items():
-                    if cmd_found in cmds:
+                    if help_for in cmds:
                         assigned_category = cat_name
                         break
                         
                 view = HelpView(ctx, self, cogs_data, help_settings, config_data)
                 view.current_cog = assigned_category
-                view.current_command = cmd_found
+                view.current_command = help_for
                 view.refresh_components()
-                embed = self.get_command_help_embed(ctx, cmd_found, config_data)
+                embed = self.get_command_help_embed(ctx, help_for, config_data)
                 msg = await ctx.send(embed=embed, view=view)
                 view.message = msg
                 return
-                
-            # Fuzzy match
-            names = [cmd.qualified_name for cmd in all_visible_commands]
-            matches = difflib.get_close_matches(help_for, names, n=5, cutoff=0.3)
-            color = config_data.get("embed_color", 0x2f3136)
-            if matches:
-                embed = discord.Embed(
-                    title="🔍 Command Not Found",
-                    description=f"No command found matching `{help_for}`. Did you mean one of these?",
-                    color=color
-                )
-                for match in matches:
-                    cmd_obj = next((c for c in all_visible_commands if c.qualified_name == match), None)
-                    if cmd_obj:
-                        short = cmd_obj.short_doc or "No description."
-                        embed.add_field(
-                            name=f"`{ctx.clean_prefix}{cmd_obj.qualified_name}`",
-                            value=short,
-                            inline=False
-                        )
-                await ctx.send(embed=embed)
-            else:
-                await ctx.send(f"No command or category found matching `{help_for}`.")
-            return
-            
-        # Cog object help
-        if isinstance(help_for, commands.Cog):
-            cogs_data = await self.get_cogs_and_commands(ctx, help_settings)
-            cog_name = help_for.qualified_name
-            
-            # Find which custom category includes this Cog
-            assigned_category = None
-            custom_categories = config_data.get("custom_categories", {})
-            for cat_name, cat_data in custom_categories.items():
-                if cog_name in cat_data.get("cogs", []):
-                    assigned_category = cat_name
-                    break
-            
-            # If not assigned to a custom category, check if it's visible in default categories (fallback to cog_name)
-            if assigned_category is None:
-                assigned_category = cog_name if cog_name in cogs_data else "Uncategorized"
-                
-            if assigned_category in cogs_data:
-                view = HelpView(ctx, self, cogs_data, help_settings, config_data)
-                view.current_cog = assigned_category
-                view.current_page = 0
-                view.refresh_components()
-                embed = view.get_cog_embed()
-                msg = await ctx.send(embed=embed, view=view)
-                view.message = msg
-            else:
-                await ctx.send(f"No commands are available in category `{cog_name}`.")
-            return
-            
-        # Command/Group object help
-        if isinstance(help_for, (commands.Command, dpy_commands.Command)):
-            if help_settings.verify_checks:
-                try:
-                    can_run = await help_for.can_run(ctx)
-                    if not can_run:
-                        await ctx.send(f"No command found matching `{help_for.qualified_name}`.")
-                        return
-                except Exception:
-                    await ctx.send(f"No command found matching `{help_for.qualified_name}`.")
-                    return
-                    
-            cogs_data = await self.get_cogs_and_commands(ctx, help_settings)
-            assigned_category = "Uncategorized"
-            for cat_name, cmds in cogs_data.items():
-                if help_for in cmds:
-                    assigned_category = cat_name
-                    break
-                    
-            view = HelpView(ctx, self, cogs_data, help_settings, config_data)
-            view.current_cog = assigned_category
-            view.current_command = help_for
-            view.refresh_components()
-            embed = self.get_command_help_embed(ctx, help_for, config_data)
-            msg = await ctx.send(embed=embed, view=view)
-            view.message = msg
-            return
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            try:
+                await ctx.send(f"An error occurred in customhelp: `{e}`. Check the logs for details.")
+            except Exception:
+                pass
 
 
 class CustomHelp(commands.Cog):
