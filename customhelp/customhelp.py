@@ -1445,3 +1445,22 @@ class CustomHelp(commands.Cog):
         """
         await self.config.clear_all()
         await ctx.send("Custom help settings reset to default values.")
+        
+    @customhelpset.command(name="debug")
+    async def customhelpset_debug(self, ctx: commands.Context):
+        """
+        Debug custom categories grouping.
+        """
+        cats = await self.config.custom_categories()
+        await ctx.send(f"Custom Categories in Config: `{cats}`")
+        
+        # Test get_cogs_and_commands
+        help_settings = await HelpSettings.from_context(ctx)
+        cogs_data = await self.formatter.get_cogs_and_commands(ctx, help_settings)
+        
+        cogs_summary = {}
+        for cat_name, cmds in cogs_data.items():
+            cogs_summary[cat_name] = [c.qualified_name for c in cmds]
+            
+        await ctx.send(f"Grouped cogs_data: `{cogs_summary}`")
+
