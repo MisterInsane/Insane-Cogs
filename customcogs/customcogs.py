@@ -230,9 +230,6 @@ class CustomCogs(commands.Cog):
     """
     def __init__(self, bot):
         self.bot = bot
-        self.old_cogs_cmd = None
-
-    def cog_load(self):
         self.old_cogs_cmd = self.bot.remove_command("cogs")
 
     def cog_unload(self):

@@ -1,7 +1,7 @@
 import discord
 from discord.ext import commands as dpy_commands
 from redbot.core import Config, commands
-from redbot.core.commands.help import HelpFormatterABC, HelpSettings, HelpTarget
+from redbot.core.commands.help import HelpFormatterABC, HelpSettings, HelpTarget, RedHelpFormatter
 import typing
 import asyncio
 import difflib
@@ -864,33 +864,10 @@ class CustomHelpFormatter(HelpFormatterABC):
         self.cog = cog
         
     async def get_cogs_and_commands(self, ctx: commands.Context, help_settings: HelpSettings) -> dict:
-        all_visible_commands = []
-        for cog_name, cog in list(ctx.bot.cogs.items()):
-            cog_commands = cog.get_commands()
-            for cmd in cog_commands:
-                if cmd.hidden and not help_settings.show_hidden:
-                    continue
-                if help_settings.verify_checks:
-                    try:
-                        can_run = await cmd.can_run(ctx)
-                        if not can_run:
-                            continue
-                    except Exception:
-                        continue
-                all_visible_commands.append(cmd)
-                
-        for cmd in list(ctx.bot.commands):
-            if cmd.cog is None:
-                if cmd.hidden and not help_settings.show_hidden:
-                    continue
-                if help_settings.verify_checks:
-                    try:
-                        can_run = await cmd.can_run(ctx)
-                        if not can_run:
-                            continue
-                    except Exception:
-                        continue
-                all_visible_commands.append(cmd)
+        all_commands = list(ctx.bot.commands)
+        all_visible_commands = await RedHelpFormatter.help_filter_func(
+            ctx, all_commands, help_settings=help_settings
+        )
                 
         custom_categories = await self.cog.config.custom_categories()
         
