@@ -89,8 +89,8 @@ def generate_passport_image(
         draw_bg.rectangle((0, 0, 800, 500), outline=(0, 255, 102), width=5)
 
     # Process avatar
-    avatar_width = 265
-    avatar_height = 386
+    avatar_width = 243
+    avatar_height = 337
     try:
         avatar = Image.open(io.BytesIO(avatar_bytes)).convert("RGBA")
         avatar = ImageOps.fit(avatar, (avatar_width, avatar_height), Image.Resampling.LANCZOS)
@@ -106,7 +106,7 @@ def generate_passport_image(
     md.rounded_rectangle((0, 0, avatar_width, avatar_height), radius=12, fill=255)
 
     # Paste the avatar onto the template
-    img.paste(avatar, (78, 56), mask=mask)
+    img.paste(avatar, (88, 107), mask=mask)
 
     # Parse accent color
     accent_color = accent_color_hex.strip()
