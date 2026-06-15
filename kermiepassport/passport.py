@@ -5,7 +5,7 @@ import calendar
 import asyncio
 import aiohttp
 from pathlib import Path
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageOps
 from redbot.core import commands, Config
 
 def get_residency_duration(joined_at: datetime.datetime) -> str:
@@ -72,8 +72,6 @@ def generate_passport_image(
     residency_str: str,
     occupation: str,
     user_id_str: str,
-    header: str,
-    subtitle: str,
     accent_color_hex: str
 ) -> io.BytesIO:
     """
@@ -91,22 +89,24 @@ def generate_passport_image(
         draw_bg.rectangle((0, 0, 800, 500), outline=(0, 255, 102), width=5)
 
     # Process avatar
+    avatar_width = 265
+    avatar_height = 386
     try:
         avatar = Image.open(io.BytesIO(avatar_bytes)).convert("RGBA")
-        avatar = avatar.resize((220, 220), Image.Resampling.LANCZOS)
+        avatar = ImageOps.fit(avatar, (avatar_width, avatar_height), Image.Resampling.LANCZOS)
     except Exception:
         # Fallback placeholder avatar
-        avatar = Image.new("RGBA", (220, 220), (30, 30, 30))
+        avatar = Image.new("RGBA", (avatar_width, avatar_height), (30, 30, 30))
         ad = ImageDraw.Draw(avatar)
-        ad.rounded_rectangle((0, 0, 220, 220), radius=15, fill=(40, 40, 40), outline=(0, 255, 102), width=3)
+        ad.rounded_rectangle((0, 0, avatar_width, avatar_height), radius=12, fill=(40, 40, 40), outline=(0, 255, 102), width=3)
 
     # Create rounded corners mask for the avatar
-    mask = Image.new("L", (220, 220), 0)
+    mask = Image.new("L", (avatar_width, avatar_height), 0)
     md = ImageDraw.Draw(mask)
-    md.rounded_rectangle((0, 0, 220, 220), radius=15, fill=255)
+    md.rounded_rectangle((0, 0, avatar_width, avatar_height), radius=12, fill=255)
 
     # Paste the avatar onto the template
-    img.paste(avatar, (50, 130), mask=mask)
+    img.paste(avatar, (78, 56), mask=mask)
 
     # Parse accent color
     accent_color = accent_color_hex.strip()
@@ -116,19 +116,19 @@ def generate_passport_image(
     draw = ImageDraw.Draw(img)
 
     # Helper to draw text and auto-scale font size if text is too long
-    def draw_text_fit(text, x, y, font_file, max_size, max_width, fill):
+    def draw_text_fit(text, x, y_center, font_file, max_size, max_width, fill):
         size = max_size
         font = None
         if font_file.exists():
             try:
                 font = ImageFont.truetype(str(font_file), size)
                 # Auto-scale font size to fit width
-                bbox = draw.textbbox((x, y), text, font=font)
+                bbox = draw.textbbox((x, y_center), text, font=font, anchor="lm")
                 w = bbox[2] - bbox[0]
                 while w > max_width and size > 8:
                     size -= 1
                     font = ImageFont.truetype(str(font_file), size)
-                    bbox = draw.textbbox((x, y), text, font=font)
+                    bbox = draw.textbbox((x, y_center), text, font=font, anchor="lm")
                     w = bbox[2] - bbox[0]
             except Exception:
                 font = None
@@ -136,37 +136,26 @@ def generate_passport_image(
         if font is None:
             font = ImageFont.load_default()
             
-        draw.text((x, y), text, font=font, fill=fill)
+        draw.text((x, y_center), text, font=font, fill=fill, anchor="lm")
 
-    # Draw Header and Subtitle at the top right
-    draw_text_fit(header, 310, 50, font_bold_path, 36, 450, "#FFFFFF")
-    draw_text_fit(subtitle, 310, 95, font_bold_path, 16, 450, accent_color)
+    # Combine joined date and residency tenure
+    if residency_str and residency_str != "N/A":
+        joined_val = f"{joined_str} ({residency_str})"
+    else:
+        joined_val = joined_str
 
-    # Define the 5 resident fields
-    fields = [
-        ("FULL NAME", name.upper(), True),
-        ("DATE JOINED", joined_str, False),
-        ("RESIDENCY", residency_str, False),
-        ("OCCUPATION", occupation, False),
-        ("CITIZEN ID NO", user_id_str, True)
-    ]
-
-    y_start = 135
-    y_offset = 64
-
-    for i, (label, val, highlight) in enumerate(fields):
-        y_label = y_start + (i * y_offset)
-        y_val = y_label + 18
-
-        # Draw Label (small, Montserrat-Bold, muted sage-green color)
-        draw_text_fit(label, 310, y_label, font_bold_path, 11, 450, "#88A090")
-
-        # Draw Value
-        val_color = accent_color if highlight else "#FFFFFF"
-        val_font = font_bold_path if highlight else font_reg_path
-        val_size = 18 if label != "FULL NAME" else 20
-
-        draw_text_fit(val, 310, y_val, val_font, val_size, 450, val_color)
+    # Draw values inside the boxes
+    # 1. Full Name (Box 1: X=351 to 729, Y=149 to 218)
+    draw_text_fit(name.upper(), 365, 183, font_bold_path, 22, 340, accent_color)
+    
+    # 2. Date Joined + Residency (Box 2: X=351 to 625, Y=246 to 284)
+    draw_text_fit(joined_val, 365, 265, font_reg_path, 14, 240, "#FFFFFF")
+    
+    # 3. Occupation (Box 3: X=351 to 731, Y=312 to 354)
+    draw_text_fit(occupation, 365, 333, font_reg_path, 15, 340, "#FFFFFF")
+    
+    # 4. Citizen ID No (Box 4: X=352 to 625, Y=388 to 426)
+    draw_text_fit(user_id_str, 365, 407, font_bold_path, 15, 240, accent_color)
 
     # Save image to bytes buffer
     buf = io.BytesIO()
@@ -186,8 +175,6 @@ class KermiePassport(commands.Cog):
 
         default_guild = {
             "default_occupation": "Citizen",
-            "custom_header": "KERMIEVILLE",
-            "custom_subtitle": "RESIDENT ID",
             "card_color": "#00FF66"
         }
         self.config.register_guild(**default_guild)
@@ -290,8 +277,6 @@ class KermiePassport(commands.Cog):
                     residency_str,
                     occupation,
                     user_id_str,
-                    config["custom_header"],
-                    config["custom_subtitle"],
                     config["card_color"]
                 )
                 
@@ -317,22 +302,6 @@ class KermiePassport(commands.Cog):
         await self.config.guild(ctx.guild).default_occupation.set(title)
         await ctx.send(f"✅ Default occupation has been set to: `{title}`")
 
-    @passportset.command(name="header")
-    async def passportset_header(self, ctx: commands.Context, *, title: str):
-        """Set the main header text at the top of the ID card."""
-        if len(title) > 20:
-            await ctx.send("⚠️ Warning: Headers longer than 20 characters may get truncated or heavily downscaled.")
-        await self.config.guild(ctx.guild).custom_header.set(title)
-        await ctx.send(f"✅ Card header text has been set to: `{title}`")
-
-    @passportset.command(name="subtitle")
-    async def passportset_subtitle(self, ctx: commands.Context, *, title: str):
-        """Set the subtitle text at the top of the ID card."""
-        if len(title) > 25:
-            await ctx.send("⚠️ Warning: Subtitles longer than 25 characters may get truncated or heavily downscaled.")
-        await self.config.guild(ctx.guild).custom_subtitle.set(title)
-        await ctx.send(f"✅ Card subtitle text has been set to: `{title}`")
-
     @passportset.command(name="color")
     async def passportset_color(self, ctx: commands.Context, hex_color: str):
         """Set the primary accent hex color for the ID card (e.g. #00FF66)."""
@@ -356,8 +325,6 @@ class KermiePassport(commands.Cog):
             title="🪪 KermiePassport Configuration",
             color=color
         )
-        embed.add_field(name="Header", value=config["custom_header"], inline=True)
-        embed.add_field(name="Subtitle", value=config["custom_subtitle"], inline=True)
         embed.add_field(name="Default Job", value=config["default_occupation"], inline=True)
         embed.add_field(name="Accent Color", value=f"`{config['card_color']}`", inline=True)
         embed.set_footer(text=f"Prefix: {ctx.clean_prefix}")
