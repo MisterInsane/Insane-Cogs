@@ -1,0 +1,22 @@
+{
+    "author": [
+        "MrInsane"
+    ],
+    "name": "KermiePassport",
+    "description": "Generates a visually stunning, custom citizen identification card or resident ID for members of Kermieville.",
+    "install_msg": "KermiePassport loaded successfully! Type [p]passport or [p]license to generate your resident ID card.",
+    "short": "Generates custom Kermieville citizen identification cards.",
+    "tags": [
+        "fun",
+        "image",
+        "passport",
+        "utility",
+        "kermieville"
+    ],
+    "min_bot_version": "3.5.0",
+    "requirements": [
+        "pillow"
+    ],
+    "disabled": false,
+    "end_user_data_statement": "This cog does not persistently store data or metadata about users."
+}
