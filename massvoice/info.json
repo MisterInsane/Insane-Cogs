@@ -1,0 +1,19 @@
+{
+    "author": [
+        "MrInsane"
+    ],
+    "name": "MassVoice",
+    "description": "Mass mute or mass deafen all members in a voice channel with a persistent undo button.",
+    "install_msg": "Thank you for installing MassVoice! Use `/massmute` or `/massdeafen` to manage your voice channels.",
+    "short": "Mass mute or mass deafen with persistent undo button.",
+    "tags": [
+        "moderation",
+        "voice",
+        "mute",
+        "deafen",
+        "utility"
+    ],
+    "min_bot_version": "3.5.0",
+    "disabled": false,
+    "end_user_data_statement": "This cog temporarily stores the Discord user IDs of members who are mass muted or mass deafened in order to support the undo/release functionality."
+}
