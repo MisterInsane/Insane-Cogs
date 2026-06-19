@@ -232,18 +232,17 @@ class MassVoice(commands.Cog):
             if success:
                 # 3. Record success to DB under lock
                 async with self.lock:
-                    actions = await self.config.guild(ctx.guild).actions()
-                    action = actions.get(str(msg.id))
-                    if action:
-                        if not action.get("undone", False):
-                            # Action is still active, append user
-                            action["targets"].append(member.id)
-                            # Redbot config will save this change when the context block exits
-                        else:
-                            # Action was cancelled DURING the edit call. Revert immediately.
-                            await self._edit_member(member, action_type, False, "Mass action aborted.")
-                            aborted = True
-                            break
+                    async with self.config.guild(ctx.guild).actions() as actions:
+                        action = actions.get(str(msg.id))
+                        if action:
+                            if not action.get("undone", False):
+                                # Action is still active, append user
+                                action["targets"].append(member.id)
+                            else:
+                                # Action was cancelled DURING the edit call. Revert immediately.
+                                await self._edit_member(member, action_type, False, "Mass action aborted.")
+                                aborted = True
+                                break
 
             # 4. Update the progress report in the public message
             progress = idx + 1
