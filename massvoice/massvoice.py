@@ -12,8 +12,7 @@ log = logging.getLogger("red.insanecogs.massvoice")
 class MassVoiceUndoView(discord.ui.View):
     """
     A persistent view containing the 'Undo / Release' button.
-    Because the custom_id is static ("massvoice:undo"), the view remains persistent
-    across bot restarts when registered with the bot in `cog_load`.
+    The custom_id is static ("massvoice:undo"), ensuring persistence.
     """
     def __init__(self, cog: "MassVoice"):
         super().__init__(timeout=None)
@@ -26,8 +25,9 @@ class MassVoiceUndoView(discord.ui.View):
     )
     async def undo_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         """Callback for the undo button."""
-        # 1. Permission check
         member = interaction.user
+        
+        # 1. Permission Check
         if not (member.guild_permissions.mute_members or member.guild_permissions.deafen_members):
             await interaction.response.send_message(
                 "You do not have permission (Server Mute or Server Deafen) to perform this action.",
@@ -35,36 +35,37 @@ class MassVoiceUndoView(discord.ui.View):
             )
             return
 
-        # Defer immediately since modifying multiple members takes time
+        # Defer immediately since undoing takes time
         await interaction.response.defer()
 
         guild = interaction.guild
         message_id = str(interaction.message.id)
 
-        # 2. Retrieve action details
-        async with self.cog.config.guild(guild).actions() as actions:
-            action = actions.get(message_id)
-            if not action:
-                await interaction.followup.send(
-                    "Could not find the action record associated with this message.",
-                    ephemeral=True
-                )
-                return
+        # 2. Retrieve action details and flag as undone under lock
+        async with self.cog.lock:
+            async with self.cog.config.guild(guild).actions() as actions:
+                action = actions.get(message_id)
+                if not action:
+                    await interaction.followup.send(
+                        "Could not find the action record associated with this message.",
+                        ephemeral=True
+                    )
+                    return
 
-            if action.get("undone", False):
-                await interaction.followup.send(
-                    "This action has already been undone.",
-                    ephemeral=True
-                )
-                return
+                if action.get("undone", False):
+                    await interaction.followup.send(
+                        "This action has already been undone.",
+                        ephemeral=True
+                    )
+                    return
 
-            # Mark as undone to prevent race conditions
-            action["undone"] = True
-            action["undone_by"] = member.id
-            action_type = action.get("action_type")
-            targets = action.get("targets", [])
+                # Mark as undone to abort any active background loops
+                action["undone"] = True
+                action["undone_by"] = member.id
+                action_type = action.get("action_type")
+                targets = action.get("targets", [])
 
-        # 3. Process undo releases
+        # 3. Process undo releases (outside the lock block to avoid blocking the background task)
         unmuted_count = 0
         undeafened_count = 0
         pending_count = 0
@@ -80,13 +81,11 @@ class MassVoiceUndoView(discord.ui.View):
                         pass
 
                 if not target_member:
-                    # User is no longer in the guild, skip
                     continue
 
                 if target_member.voice and target_member.voice.channel:
                     tasks.append((target_member, target_id))
                 else:
-                    # Queue for release when they next connect to voice
                     member_id_str = str(target_id)
                     if member_id_str not in pending:
                         pending[member_id_str] = {"mute": False, "deafen": False}
@@ -94,7 +93,6 @@ class MassVoiceUndoView(discord.ui.View):
                     pending_count += 1
 
             if tasks:
-                # Execute edits concurrently
                 edit_tasks = [
                     self.cog._edit_member(
                         m,
@@ -114,14 +112,13 @@ class MassVoiceUndoView(discord.ui.View):
                         else:
                             undeafened_count += 1
                     else:
-                        # Queue if edit failed (e.g. they disconnected during the process)
                         member_id_str = str(m_id)
                         if member_id_str not in pending:
                             pending[member_id_str] = {"mute": False, "deafen": False}
                         pending[member_id_str][action_type] = True
                         pending_count += 1
 
-        # 4. Disable button and update status message
+        # 4. Update the message UI
         button.disabled = True
         button.label = "Undone / Released"
         button.style = discord.ButtonStyle.secondary
@@ -141,12 +138,14 @@ class MassVoiceUndoView(discord.ui.View):
 class MassVoice(commands.Cog):
     """
     Mass mute or mass deafen all members in a voice channel with a persistent undo option.
+    Includes background processing, real-time progress bars, and immediate cancellation.
     """
 
     def __init__(self, bot: Red):
         self.bot = bot
         self.config = Config.get_conf(self, identifier=8923482, force_registration=True)
-        
+        self.lock = asyncio.Lock()  # Lock to serialize Config writes and prevent race conditions
+
         default_guild = {
             "actions": {},
             "pending_releases": {}
@@ -180,6 +179,95 @@ class MassVoice(commands.Cog):
             return True
         except (discord.Forbidden, discord.HTTPException):
             return False
+
+    def _make_progress_bar(self, progress: int, total: int) -> str:
+        """Generate a sleek unicode progress bar."""
+        blocks = 10
+        filled = int(round((progress / total) * blocks)) if total > 0 else 0
+        empty = blocks - filled
+        bar = "█" * filled + "░" * empty
+        percent = int((progress / total) * 100) if total > 0 else 0
+        return f"`{bar}` **{percent}%**"
+
+    async def _run_mass_action(
+        self,
+        ctx: commands.Context,
+        msg: discord.Message,
+        channel: Union[discord.VoiceChannel, discord.StageChannel],
+        targets: list,
+        action_type: str,
+        skipped_count: int
+    ):
+        """Background worker that applies the action and updates progress/aborts if requested."""
+        reason = f"Mass {action_type.capitalize()} by {ctx.author.name}"
+        total = len(targets)
+        aborted = False
+
+        for idx, member in enumerate(targets):
+            # 1. Check if action has been aborted (undone) before performing edit
+            async with self.lock:
+                actions = await self.config.guild(ctx.guild).actions()
+                action = actions.get(str(msg.id))
+                if not action or action.get("undone", False):
+                    aborted = True
+                    break
+
+            # 2. Perform voice state update
+            success = await self._edit_member(member, action_type, True, reason)
+
+            if success:
+                # 3. Record success to DB under lock
+                async with self.lock:
+                    actions = await self.config.guild(ctx.guild).actions()
+                    action = actions.get(str(msg.id))
+                    if action:
+                        if not action.get("undone", False):
+                            # Action is still active, append user
+                            action["targets"].append(member.id)
+                            # Redbot config will save this change when the context block exits
+                        else:
+                            # Action was cancelled DURING the edit call. Revert immediately.
+                            await self._edit_member(member, action_type, False, "Mass action aborted.")
+                            aborted = True
+                            break
+
+            # 4. Update the progress report in the public message
+            progress = idx + 1
+            bar = self._make_progress_bar(progress, total)
+            emoji = "🎙️" if action_type == "mute" else "🔇"
+            action_name = "Mute" if action_type == "mute" else "Deafen"
+
+            content = (
+                f"{emoji} **Mass {action_name} executing in {channel.mention}...**\n"
+                f"- **Issued by**: {ctx.author.mention}\n"
+                f"- **Progress**: {bar} ({progress}/{total} members)\n"
+                f"- **Skipped**: {skipped_count}"
+            )
+            try:
+                await msg.edit(content=content)
+            except discord.HTTPException:
+                pass
+
+        # 5. Finalize status message
+        async with self.lock:
+            actions = await self.config.guild(ctx.guild).actions()
+            action = actions.get(str(msg.id))
+            is_undone = action.get("undone", False) if action else False
+
+        if not is_undone and not aborted:
+            # Completed normally
+            emoji = "🎙️" if action_type == "mute" else "🔇"
+            action_name = "Mute" if action_type == "mute" else "Deafen"
+            content = (
+                f"{emoji} **Mass {action_name} executed in {channel.mention}**\n"
+                f"- **Issued by**: {ctx.author.mention}\n"
+                f"- **Members affected**: {total}\n"
+                f"- **Skipped**: {skipped_count}"
+            )
+            try:
+                await msg.edit(content=content)
+            except discord.HTTPException:
+                pass
 
     @commands.hybrid_command(
         name="massmute",
@@ -228,47 +316,37 @@ class MassVoice(commands.Cog):
             )
             return
 
-        # Inform command executor
-        initial_msg = await ctx.send(f"Processing mass mute for {len(targets)} members in {channel.mention}...", ephemeral=True)
+        # Send command receipt (ephemeral response)
+        await ctx.send(f"Initiating mass mute for {len(targets)} members in {channel.mention}...", ephemeral=True)
 
-        # 5. Apply server mutes concurrently
-        reason = f"Mass Muted by {ctx.author.name}"
-        tasks = [self._edit_member(m, "mute", True, reason) for m in targets]
-        results = await asyncio.gather(*tasks)
-        
-        success_targets = [targets[i].id for i, success in enumerate(results) if success]
-
-        if not success_targets:
-            await initial_msg.edit(content="Failed to mass mute any members in the channel (insufficient bot permissions or API errors).")
-            return
-
-        # 6. Post public control message & view
+        # 5. Post public progress message and view
         view = MassVoiceUndoView(self)
+        bar = self._make_progress_bar(0, len(targets))
         content = (
-            f"🎙️ **Mass Mute executed in {channel.mention}**\n"
+            f"🎙️ **Mass Mute executing in {channel.mention}...**\n"
             f"- **Issued by**: {ctx.author.mention}\n"
-            f"- **Members muted**: {len(success_targets)}\n"
+            f"- **Progress**: {bar} (0/{len(targets)} members)\n"
             f"- **Skipped**: {skipped_count}"
         )
         msg = await ctx.channel.send(content=content, view=view)
 
-        # 7. Save action details to Config
-        async with self.config.guild(ctx.guild).actions() as actions:
-            actions[str(msg.id)] = {
-                "guild_id": ctx.guild.id,
-                "channel_id": channel.id,
-                "action_type": "mute",
-                "targets": success_targets,
-                "undone": False,
-                "issuer_id": ctx.author.id,
-                "timestamp": datetime.datetime.utcnow().timestamp()
-            }
+        # 6. Initialize action details in Config
+        async with self.lock:
+            async with self.config.guild(ctx.guild).actions() as actions:
+                actions[str(msg.id)] = {
+                    "guild_id": ctx.guild.id,
+                    "channel_id": channel.id,
+                    "action_type": "mute",
+                    "targets": [],
+                    "undone": False,
+                    "issuer_id": ctx.author.id,
+                    "timestamp": datetime.datetime.utcnow().timestamp()
+                }
 
-        # Clear ephemeral progress message
-        try:
-            await initial_msg.delete()
-        except discord.HTTPException:
-            pass
+        # 7. Spawn background task to process edits
+        asyncio.create_task(
+            self._run_mass_action(ctx, msg, channel, targets, "mute", skipped_count)
+        )
 
     @commands.hybrid_command(
         name="massdeafen",
@@ -317,52 +395,41 @@ class MassVoice(commands.Cog):
             )
             return
 
-        # Inform command executor
-        initial_msg = await ctx.send(f"Processing mass deafen for {len(targets)} members in {channel.mention}...", ephemeral=True)
+        # Send command receipt (ephemeral response)
+        await ctx.send(f"Initiating mass deafen for {len(targets)} members in {channel.mention}...", ephemeral=True)
 
-        # 5. Apply server deafens concurrently
-        reason = f"Mass Deafened by {ctx.author.name}"
-        tasks = [self._edit_member(m, "deafen", True, reason) for m in targets]
-        results = await asyncio.gather(*tasks)
-        
-        success_targets = [targets[i].id for i, success in enumerate(results) if success]
-
-        if not success_targets:
-            await initial_msg.edit(content="Failed to mass deafen any members in the channel (insufficient bot permissions or API errors).")
-            return
-
-        # 6. Post public control message & view
+        # 5. Post public progress message and view
         view = MassVoiceUndoView(self)
+        bar = self._make_progress_bar(0, len(targets))
         content = (
-            f"🔇 **Mass Deafen executed in {channel.mention}**\n"
+            f"🔇 **Mass Deafen executing in {channel.mention}...**\n"
             f"- **Issued by**: {ctx.author.mention}\n"
-            f"- **Members deafened**: {len(success_targets)}\n"
+            f"- **Progress**: {bar} (0/{len(targets)} members)\n"
             f"- **Skipped**: {skipped_count}"
         )
         msg = await ctx.channel.send(content=content, view=view)
 
-        # 7. Save action details to Config
-        async with self.config.guild(ctx.guild).actions() as actions:
-            actions[str(msg.id)] = {
-                "guild_id": ctx.guild.id,
-                "channel_id": channel.id,
-                "action_type": "deafen",
-                "targets": success_targets,
-                "undone": False,
-                "issuer_id": ctx.author.id,
-                "timestamp": datetime.datetime.utcnow().timestamp()
-            }
+        # 6. Initialize action details in Config
+        async with self.lock:
+            async with self.config.guild(ctx.guild).actions() as actions:
+                actions[str(msg.id)] = {
+                    "guild_id": ctx.guild.id,
+                    "channel_id": channel.id,
+                    "action_type": "deafen",
+                    "targets": [],
+                    "undone": False,
+                    "issuer_id": ctx.author.id,
+                    "timestamp": datetime.datetime.utcnow().timestamp()
+                }
 
-        # Clear ephemeral progress message
-        try:
-            await initial_msg.delete()
-        except discord.HTTPException:
-            pass
+        # 7. Spawn background task to process edits
+        asyncio.create_task(
+            self._run_mass_action(ctx, msg, channel, targets, "deafen", skipped_count)
+        )
 
     @commands.Cog.listener()
     async def on_voice_state_update(self, member: discord.Member, before: discord.VoiceState, after: discord.VoiceState):
         """Event listener to apply pending unmute/undeafen releases when a member connects to voice."""
-        # Only trigger when joining a voice channel
         if not after.channel:
             return
 
@@ -384,11 +451,8 @@ class MassVoice(commands.Cog):
                 if kwargs:
                     try:
                         await member.edit(reason="MassVoice pending release applied.", **kwargs)
-                        # Remove from pending on success
                         del pending[member_id_str]
                     except discord.Forbidden:
-                        # Lack permissions, remove to avoid infinite loop of failures
                         del pending[member_id_str]
                     except discord.HTTPException:
-                        # Retry next time if temporary API error or if they disconnected mid-process
                         pass
