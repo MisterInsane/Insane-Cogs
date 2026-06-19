@@ -163,6 +163,20 @@ class MassVoice(commands.Cog):
         perms = ctx.author.guild_permissions
         return perms.mute_members or perms.deafen_members
 
+    async def _send_private_error(self, ctx: commands.Context, text: str):
+        """Send an error message that can only be seen by the invoking user (ephemeral or DM)."""
+        if ctx.interaction:
+            await ctx.send(text, ephemeral=True)
+        else:
+            try:
+                await ctx.author.send(text)
+            except discord.Forbidden:
+                pass
+            try:
+                await ctx.message.delete()
+            except discord.HTTPException:
+                pass
+
     async def _edit_member(
         self,
         member: discord.Member,
@@ -279,12 +293,12 @@ class MassVoice(commands.Cog):
         """Mass mutes everyone in a voice channel."""
         # 1. User permissions check
         if not await self._check_permissions(ctx):
-            await ctx.send("You do not have the required permissions (Server Mute or Server Deafen) to use this command.", ephemeral=True)
+            await self._send_private_error(ctx, "You do not have the required permissions (Server Mute or Server Deafen) to use this command.")
             return
 
         # 2. Bot permissions check
         if not ctx.guild.me.guild_permissions.mute_members:
-            await ctx.send("I do not have the 'Mute Members' permission on this server.", ephemeral=True)
+            await self._send_private_error(ctx, "I do not have the 'Mute Members' permission on this server.")
             return
 
         # 3. Resolve target channel
@@ -292,9 +306,9 @@ class MassVoice(commands.Cog):
             if ctx.author.voice and ctx.author.voice.channel:
                 channel = ctx.author.voice.channel
             else:
-                await ctx.send(
-                    "You must be in a voice channel to use this command, or specify a voice channel as an argument.",
-                    ephemeral=True
+                await self._send_private_error(
+                    ctx,
+                    "You must be in a voice channel to use this command, or specify a voice channel as an argument."
                 )
                 return
 
@@ -310,9 +324,9 @@ class MassVoice(commands.Cog):
                 skipped_count += 1
 
         if not targets:
-            await ctx.send(
-                f"No members in {channel.mention} need to be muted (they are already server muted or are bots).",
-                ephemeral=True
+            await self._send_private_error(
+                ctx,
+                f"No members in {channel.mention} need to be muted (they are already server muted or are bots)."
             )
             return
 
@@ -358,12 +372,12 @@ class MassVoice(commands.Cog):
         """Mass deafens everyone in a voice channel."""
         # 1. User permissions check
         if not await self._check_permissions(ctx):
-            await ctx.send("You do not have the required permissions (Server Mute or Server Deafen) to use this command.", ephemeral=True)
+            await self._send_private_error(ctx, "You do not have the required permissions (Server Mute or Server Deafen) to use this command.")
             return
 
         # 2. Bot permissions check
         if not ctx.guild.me.guild_permissions.deafen_members:
-            await ctx.send("I do not have the 'Deafen Members' permission on this server.", ephemeral=True)
+            await self._send_private_error(ctx, "I do not have the 'Deafen Members' permission on this server.")
             return
 
         # 3. Resolve target channel
@@ -371,9 +385,9 @@ class MassVoice(commands.Cog):
             if ctx.author.voice and ctx.author.voice.channel:
                 channel = ctx.author.voice.channel
             else:
-                await ctx.send(
-                    "You must be in a voice channel to use this command, or specify a voice channel as an argument.",
-                    ephemeral=True
+                await self._send_private_error(
+                    ctx,
+                    "You must be in a voice channel to use this command, or specify a voice channel as an argument."
                 )
                 return
 
@@ -389,9 +403,9 @@ class MassVoice(commands.Cog):
                 skipped_count += 1
 
         if not targets:
-            await ctx.send(
-                f"No members in {channel.mention} need to be deafened (they are already server deafened or are bots).",
-                ephemeral=True
+            await self._send_private_error(
+                ctx,
+                f"No members in {channel.mention} need to be deafened (they are already server deafened or are bots)."
             )
             return
 
