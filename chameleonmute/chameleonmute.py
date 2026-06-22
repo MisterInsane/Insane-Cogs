@@ -21,6 +21,7 @@ class ChameleonCycle:
         whistle_time: float,
         hold_time: float,
         mute_lead: float,
+        round_time: float,
         message_id: int,
         task: asyncio.Task
     ):
@@ -29,6 +30,7 @@ class ChameleonCycle:
         self.whistle_time = whistle_time
         self.hold_time = hold_time
         self.mute_lead = mute_lead
+        self.round_time = round_time
         self.message_id = message_id
         self.task = task
         self.muted_ids: List[int] = []  # Tracks members muted in the current phase (preserves order)
@@ -281,6 +283,7 @@ class ChameleonMute(commands.Cog):
         whistle_time: float,
         hold_time: float,
         mute_lead: float,
+        round_time: Union[float, None],
         msg: discord.Message
     ):
         """
@@ -294,6 +297,7 @@ class ChameleonMute(commands.Cog):
         start_time = asyncio.get_event_loop().time()
         next_whistle = start_time + whistle_time
         buffer = 0.5  # API latency buffer
+        stop_time = start_time + round_time if round_time else None
 
         try:
             while True:
@@ -330,6 +334,15 @@ class ChameleonMute(commands.Cog):
                 unmute_reason = f"Chameleon Whistle Unmute (Hold duration: {hold_time}s)"
                 await self._rate_limited_unmute(guild, cycle, unmute_reason)
 
+                # Check if next whistle exceeds stop_time
+                if stop_time and (next_whistle + whistle_time) > stop_time:
+                    try:
+                        content = f"⏹️ **Chameleon Mute Cycle Auto-Ended**\n- **Reason**: Round time limit reached ({int(round_time)}s)"
+                        await msg.edit(content=content, view=None)
+                    except Exception:
+                        pass
+                    break
+
                 # 5. Prepare next cycle
                 next_whistle += whistle_time
 
@@ -344,11 +357,18 @@ class ChameleonMute(commands.Cog):
                         f"- **Whistle Interval**: {whistle_time}s\n"
                         f"- **Mute Lead Time**: {mute_lead}s\n"
                         f"- **Hold Time**: {hold_time}s\n"
-                        f"- **Next Whistle**: <t:{next_whistle_timestamp}:R> (at <t:{next_whistle_timestamp}:T>)\n"
                     )
+                    if round_time:
+                        content += f"- **Round Time Limit**: {int(round_time)}s\n"
+                    content += f"- **Next Whistle**: <t:{next_whistle_timestamp}:R> (at <t:{next_whistle_timestamp}:T>)\n"
                     await msg.edit(content=content)
                 except Exception:
                     pass
+
+            # Normal termination (auto-end reached)
+            self.active_cycles.pop(guild.id, None)
+            async with self.lock:
+                await self.config.guild(guild).active_channel_id.set(None)
 
         except asyncio.CancelledError:
             log.info(f"Chameleon Mute cycle in guild {guild.id} has been cancelled.")
@@ -358,6 +378,8 @@ class ChameleonMute(commands.Cog):
             # Safe unmute cleanup
             await self._rate_limited_unmute(guild, cycle, "Chameleon Whistle Error Release")
             self.active_cycles.pop(guild.id, None)
+            async with self.lock:
+                await self.config.guild(guild).active_channel_id.set(None)
 
     @commands.hybrid_group(name="chameleonmute", description="Manage recurring Chameleon Mute cycles.")
     @commands.guild_only()
@@ -370,6 +392,7 @@ class ChameleonMute(commands.Cog):
         whistle_time="The whistle interval in seconds.",
         hold_time="Duration to keep players muted in seconds (default 5.0).",
         mute_lead="Seconds before the whistle to start muting (default 5.0).",
+        round_time="The maximum round duration in seconds, after which the cycle auto-ends (optional).",
         channel="Voice channel to use (defaults to your current channel)."
     )
     async def chameleonmute_start(
@@ -378,6 +401,7 @@ class ChameleonMute(commands.Cog):
         whistle_time: int,
         hold_time: float = 5.0,
         mute_lead: float = 5.0,
+        round_time: int = None,
         channel: Union[discord.VoiceChannel, discord.StageChannel] = None
     ):
         """Starts a recurring mass mute/unmute cycle in a voice channel."""
@@ -416,6 +440,13 @@ class ChameleonMute(commands.Cog):
             )
             return
 
+        if round_time is not None and round_time <= whistle_time:
+            await self._send_private_error(
+                ctx,
+                f"The round time limit ({round_time}s) must be greater than the whistle interval ({whistle_time}s)."
+            )
+            return
+
         # Send command receipt (ephemeral response)
         await ctx.send(f"Initiating Chameleon Mute cycle for {channel.mention}...", ephemeral=True)
 
@@ -427,8 +458,10 @@ class ChameleonMute(commands.Cog):
             f"- **Whistle Interval**: {whistle_time}s\n"
             f"- **Mute Lead Time**: {mute_lead}s\n"
             f"- **Hold Time**: {hold_time}s\n"
-            f"- **Next Whistle**: <t:{next_whistle_timestamp}:R> (at <t:{next_whistle_timestamp}:T>)\n"
         )
+        if round_time:
+            content += f"- **Round Time Limit**: {round_time}s\n"
+        content += f"- **Next Whistle**: <t:{next_whistle_timestamp}:R> (at <t:{next_whistle_timestamp}:T>)\n"
         msg = await ctx.channel.send(content=content, view=view)
 
         # 7. Store configuration for crash recovery/restart fail-safe
@@ -437,7 +470,7 @@ class ChameleonMute(commands.Cog):
 
         # 8. Start background loop task
         loop = asyncio.get_running_loop()
-        task = loop.create_task(self._cycle_loop(ctx.guild, channel, float(whistle_time), hold_time, mute_lead, msg))
+        task = loop.create_task(self._cycle_loop(ctx.guild, channel, float(whistle_time), hold_time, mute_lead, float(round_time) if round_time else None, msg))
 
         # 9. Track active cycle
         cycle = ChameleonCycle(
@@ -446,6 +479,7 @@ class ChameleonMute(commands.Cog):
             whistle_time=float(whistle_time),
             hold_time=hold_time,
             mute_lead=mute_lead,
+            round_time=float(round_time) if round_time else None,
             message_id=msg.id,
             task=task
         )
