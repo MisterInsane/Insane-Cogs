@@ -1,0 +1,19 @@
+{
+    "author": [
+        "MrInsane"
+    ],
+    "name": "ChameleonMute",
+    "description": "An alternative massmute cog for Meccha Chameleon games. Supports a recurring mute/unmute cycle with configurable whistle intervals, rate-limiting, and an interactive stop button.",
+    "install_msg": "Thank you for installing ChameleonMute! Use `/chameleonmute start` to begin a recurring mute/unmute cycle.",
+    "short": "Recurring mass mute and unmute for Meccha Chameleon games.",
+    "tags": [
+        "moderation",
+        "voice",
+        "mute",
+        "chameleon",
+        "utility"
+    ],
+    "min_bot_version": "3.5.0",
+    "disabled": false,
+    "end_user_data_statement": "This cog temporarily stores the Discord user IDs of members who are server muted during a game cycle to ensure they can be unmuted when the cycle is stopped or when they reconnect to voice."
+}
