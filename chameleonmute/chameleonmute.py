@@ -20,6 +20,7 @@ class ChameleonCycle:
         channel_id: int,
         whistle_time: float,
         hold_time: float,
+        mute_lead: float,
         message_id: int,
         task: asyncio.Task
     ):
@@ -27,6 +28,7 @@ class ChameleonCycle:
         self.channel_id = channel_id
         self.whistle_time = whistle_time
         self.hold_time = hold_time
+        self.mute_lead = mute_lead
         self.message_id = message_id
         self.task = task
         self.muted_ids: List[int] = []  # Tracks members muted in the current phase (preserves order)
@@ -278,6 +280,7 @@ class ChameleonMute(commands.Cog):
         channel: discord.VoiceChannel,
         whistle_time: float,
         hold_time: float,
+        mute_lead: float,
         msg: discord.Message
     ):
         """
@@ -300,7 +303,8 @@ class ChameleonMute(commands.Cog):
                     # Recalculate lead time based on current channel population
                     targets = [m for m in channel.members if not m.bot and not m.voice.mute]
                     n = len(targets)
-                    lead_time = (n * 0.1) + buffer
+                    min_lead_time = (n * 0.1) + buffer
+                    lead_time = max(mute_lead, min_lead_time)
 
                     target_time = next_whistle - lead_time
                     if now >= target_time:
@@ -338,6 +342,7 @@ class ChameleonMute(commands.Cog):
                     content = (
                         f"🔊 **Chameleon Mute Cycle Active in {channel.mention}**\n"
                         f"- **Whistle Interval**: {whistle_time}s\n"
+                        f"- **Mute Lead Time**: {mute_lead}s\n"
                         f"- **Hold Time**: {hold_time}s\n"
                         f"- **Next Whistle**: <t:{next_whistle_timestamp}:R> (at <t:{next_whistle_timestamp}:T>)\n"
                     )
@@ -363,14 +368,16 @@ class ChameleonMute(commands.Cog):
     @chameleonmute.command(name="start", description="Start a recurring mute/unmute cycle.")
     @app_commands.describe(
         whistle_time="The whistle interval in seconds.",
-        hold_time="Duration to keep players muted in seconds (default 3.5).",
+        hold_time="Duration to keep players muted in seconds (default 5.0).",
+        mute_lead="Seconds before the whistle to start muting (default 5.0).",
         channel="Voice channel to use (defaults to your current channel)."
     )
     async def chameleonmute_start(
         self,
         ctx: commands.Context,
         whistle_time: int,
-        hold_time: float = 3.5,
+        hold_time: float = 5.0,
+        mute_lead: float = 5.0,
         channel: Union[discord.VoiceChannel, discord.StageChannel] = None
     ):
         """Starts a recurring mass mute/unmute cycle in a voice channel."""
@@ -402,10 +409,10 @@ class ChameleonMute(commands.Cog):
 
         # 5. Timing validation
         # Absolute minimum timing bounds
-        if whistle_time <= hold_time + 2.0:
+        if whistle_time <= mute_lead + hold_time + 1.0:
             await self._send_private_error(
                 ctx,
-                f"The whistle time ({whistle_time}s) must be at least 2 seconds longer than the hold time ({hold_time}s) to allow time for muting and unmuting."
+                f"The whistle time ({whistle_time}s) must be longer than the sum of the mute lead time ({mute_lead}s) and hold time ({hold_time}s) to allow time for muting and unmuting."
             )
             return
 
@@ -418,6 +425,7 @@ class ChameleonMute(commands.Cog):
         content = (
             f"🔊 **Chameleon Mute Cycle Active in {channel.mention}**\n"
             f"- **Whistle Interval**: {whistle_time}s\n"
+            f"- **Mute Lead Time**: {mute_lead}s\n"
             f"- **Hold Time**: {hold_time}s\n"
             f"- **Next Whistle**: <t:{next_whistle_timestamp}:R> (at <t:{next_whistle_timestamp}:T>)\n"
         )
@@ -429,7 +437,7 @@ class ChameleonMute(commands.Cog):
 
         # 8. Start background loop task
         loop = asyncio.get_running_loop()
-        task = loop.create_task(self._cycle_loop(ctx.guild, channel, float(whistle_time), hold_time, msg))
+        task = loop.create_task(self._cycle_loop(ctx.guild, channel, float(whistle_time), hold_time, mute_lead, msg))
 
         # 9. Track active cycle
         cycle = ChameleonCycle(
@@ -437,6 +445,7 @@ class ChameleonMute(commands.Cog):
             channel_id=channel.id,
             whistle_time=float(whistle_time),
             hold_time=hold_time,
+            mute_lead=mute_lead,
             message_id=msg.id,
             task=task
         )
